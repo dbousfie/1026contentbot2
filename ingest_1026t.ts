@@ -9,7 +9,7 @@ if (!token) {
   Deno.exit(1);
 }
 
-const server = "https://1026contentbot.deno.dev"; // your Deno deploy URL
+const server = "https://1026contentbot2.deno.dev"; // your Deno deploy URL
 
 // make a safe id from file name
 function slug(s: string) {
@@ -52,3 +52,4 @@ for (let i = 0; i < entries.length; i += BATCH) {
   console.log(`Ingested ${i + items.length}/${entries.length}`);
 }
 console.log("Done.");
+
