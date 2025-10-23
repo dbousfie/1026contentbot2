@@ -1,4 +1,4 @@
-// main.ts — KV-lean RAG with packed chunks + RAM index + exact Sources
+// main.ts — KV-lean RAG with packed chunks + RAM index + exact Sources + Qualtrics SURVEY logging
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
@@ -9,10 +9,15 @@ const EMBEDDING_MODEL      = Deno.env.get("EMBEDDING_MODEL") ?? "text-embedding-
 const ADMIN_TOKEN          = (Deno.env.get("ADMIN_TOKEN") ?? "").trim();
 const SYLLABUS_LINK        = Deno.env.get("SYLLABUS_LINK") ?? "";
 
-const STRICT_RAG = (Deno.env.get("STRICT_RAG") ?? "true").toLowerCase() === "true";
-const MIN_SCORE  = Number(Deno.env.get("RAG_MIN_SCORE") ?? "0.25");
-const TOP_K      = Number(Deno.env.get("RAG_TOP_K") ?? "3");
-const CACHE_TTL_MIN = Number(Deno.env.get("CACHE_TTL_MIN") ?? "60"); // refresh index hourly by default
+const STRICT_RAG   = (Deno.env.get("STRICT_RAG") ?? "true").toLowerCase() === "true";
+const MIN_SCORE    = Number(Deno.env.get("RAG_MIN_SCORE") ?? "0.25");
+const TOP_K        = Number(Deno.env.get("RAG_TOP_K") ?? "3");
+const CACHE_TTL_MIN = Number(Deno.env.get("CACHE_TTL_MIN") ?? "60"); // refresh index hourly
+
+// --- Qualtrics SURVEY logging (same style as your other bots) ---
+const QUALTRICS_API_TOKEN  = Deno.env.get("QUALTRICS_API_TOKEN") ?? "";
+const QUALTRICS_SURVEY_ID  = Deno.env.get("QUALTRICS_SURVEY_ID") ?? "";
+const QUALTRICS_DATACENTER = Deno.env.get("QUALTRICS_DATACENTER") ?? "";
 
 /* ===== CORS ===== */
 const CORS = {
@@ -66,6 +71,34 @@ async function embed(text: string): Promise<number[]> {
   if (!r.ok) throw new Error(`embedding ${r.status}: ${await r.text()}`);
   const j = await r.json();
   return j.data[0].embedding as number[];
+}
+
+/* ===== Qualtrics (Survey Responses API) — fire-and-forget ===== */
+async function logQualtricsSurvey(responseText: string, queryText: string) {
+  if (!QUALTRICS_API_TOKEN || !QUALTRICS_SURVEY_ID || !QUALTRICS_DATACENTER) return;
+  const url = `https://${QUALTRICS_DATACENTER}.qualtrics.com/API/v3/surveys/${QUALTRICS_SURVEY_ID}/responses`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-TOKEN": QUALTRICS_API_TOKEN,
+      },
+      body: JSON.stringify({
+        values: {
+          responseText,
+          queryText,
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    // never block user responses
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* ===== RAM index ===== */
@@ -229,7 +262,13 @@ async function handleChat(req: Request) {
   // enforce exact Sources (ignore model-written ones)
   const cleaned = String(base).replace(/^\s*Sources:.*$/gmi, "").trim();
   const exactSources = `\n\nSources: ${sourceTitles.join("; ")}`;
-  return respond(`${cleaned}${exactSources}${footer()}`);
+  const finalText = `${cleaned}${exactSources}${footer()}`;
+
+  // Qualtrics survey logging (same payload shape as your template)
+  // fire-and-forget; never await
+  logQualtricsSurvey(finalText, userQuery);
+
+  return respond(finalText);
 }
 
 /* ===== Router ===== */
